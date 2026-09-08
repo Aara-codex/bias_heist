@@ -21,6 +21,32 @@ h1, h2, h3 { color: #f4c95d !important; font-family: 'Georgia', serif; }
     padding: 1.2rem 1.5rem;
     margin-bottom: 1rem;
 }
+.intel-card {
+    background: #1e1a10;
+    border-left: 3px solid #f4c95d;
+    border-radius: 4px;
+    padding: 0.9rem 1.2rem;
+    margin-bottom: 0.7rem;
+    font-style: italic;
+}
+.locked-card {
+    background: #16162a;
+    border-left: 3px solid #4a4a5a;
+    border-radius: 4px;
+    padding: 0.9rem 1.2rem;
+    margin-bottom: 0.7rem;
+    color: #6a6a7a;
+}
+.rank-badge {
+    display: inline-block;
+    background: linear-gradient(90deg, #f4c95d, #ffd97a);
+    color: #16162a;
+    font-weight: 800;
+    padding: 0.35rem 1rem;
+    border-radius: 20px;
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+}
 .stButton>button {
     background: #f4c95d;
     color: #16162a;
@@ -36,9 +62,6 @@ h1, h2, h3 { color: #f4c95d !important; font-family: 'Georgia', serif; }
 model = joblib.load("funding_model.pkl")
 
 # ---------- HIDDEN TEXT-PARSING LOGIC (facilitator mechanism, not shown to participants) ----------
-# Maps free-text founder bios into a referral_channel_score (0-1).
-# Participants never see this dict — they only see the score's effect
-# on the decision, and have to reverse-engineer which phrases matter.
 ELITE_SIGNALS = {
     r"\by\s*combinator\b|\byc\b": 0.30,
     r"\bstanford\b": 0.22,
@@ -64,8 +87,47 @@ def compute_referral_score(bio_text: str) -> float:
     return min(score, 1.0)
 
 
+# ---------- DETECTIVE RANK SYSTEM ----------
+RANKS = [
+    (0, "🥚 Rookie"),
+    (3, "🔍 Junior Analyst"),
+    (6, "🕵️ Field Detective"),
+    (10, "🎯 Senior Investigator"),
+    (15, "🏆 Master Sleuth"),
+]
+
+# Leaked intel unlocks at submission milestones — vague enough not to hand
+# over the answer, but useful nudges for teams that get stuck.
+INTEL = [
+    (4, "An anonymous analyst's note: \"People keep blaming the sector split. "
+        "I've run the numbers — sector alone doesn't explain nearly enough of it.\""),
+    (8, "Overheard in a Slack leak: \"We tell founders not to oversell their growth "
+        "numbers... some get penalized for looking *too* good, not too weak.\""),
+    (12, "A rejected founder's complaint email: \"My co-founder left last month and "
+        "suddenly our score tanked — nothing else about the business changed.\""),
+    (16, "A partner's voicemail transcript: \"...told them a seven-figure ask spooks "
+        "the committee no matter how clean the books are.\""),
+]
+
+
+def get_rank(count):
+    rank = RANKS[0][1]
+    for threshold, name in RANKS:
+        if count >= threshold:
+            rank = name
+    return rank
+
+
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+submission_count = len(st.session_state.history)
+
 # ---------- HEADER / CASE BRIEFING ----------
 st.title("🕵️ BIAS HEIST: The Funding Files")
+
+st.markdown(f'<div class="rank-badge">{get_rank(submission_count)} — {submission_count} pitches investigated</div>',
+            unsafe_allow_html=True)
 
 with st.container():
     st.markdown("""
@@ -77,8 +139,9 @@ with st.container():
     no feature list. All you get is an interview room and a decision.<br><br>
     <b>Your job:</b> submit pitches, watch what the model does, and build a case
     for what's <i>really</i> driving its decisions. There may be more than one
-    thing going on — test full ranges, not just typical values. When you're
-    ready, file your accusation below.
+    thing going on — test full ranges, not just typical values. Keep investigating:
+    new intel surfaces the deeper you dig. When you're ready, file your
+    accusation below.
     </div>
     """, unsafe_allow_html=True)
 
@@ -121,16 +184,23 @@ with left:
         proba = model.predict_proba(row)[0][1]
         decision = "FUNDED ✅" if proba >= 0.5 else "REJECTED ❌"
 
-        if "history" not in st.session_state:
-            st.session_state.history = []
         st.session_state.history.append({**row.iloc[0].to_dict(),
                                           "approval_prob": round(proba, 3),
                                           "decision": decision})
+        new_count = len(st.session_state.history)
+
         st.metric("Verdict", decision, f"{proba:.1%} confidence")
+
+        just_unlocked = [note for threshold, note in INTEL if threshold == new_count]
+        just_ranked_up = get_rank(new_count) != get_rank(new_count - 1)
+        if just_ranked_up:
+            st.toast(f"Rank up! You're now {get_rank(new_count)}", icon="🎖️")
+        if just_unlocked:
+            st.toast("New intel unlocked — check Confidential Intel below 🗂️", icon="📨")
 
 with right:
     st.subheader("📋 Evidence Board")
-    hist = st.session_state.get("history", [])
+    hist = st.session_state.history
     if not hist:
         st.info("No pitches interviewed yet. Submit one on the left to start building your case.")
     else:
@@ -162,6 +232,22 @@ with right:
         if len(hist) >= 3 and st.button("🔄 Clear evidence board"):
             st.session_state.history = []
             st.rerun()
+
+st.divider()
+
+# ---------- CONFIDENTIAL INTEL ----------
+st.subheader("🗂️ Confidential Intel")
+st.caption("Leaked notes surface as you dig deeper into the case.")
+
+for threshold, note in INTEL:
+    if submission_count >= threshold:
+        st.markdown(f'<div class="intel-card">📨 {note}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(
+            f'<div class="locked-card">🔒 Locked — investigate {threshold - submission_count} '
+            f'more pitch(es) to unlock this lead.</div>',
+            unsafe_allow_html=True,
+        )
 
 st.divider()
 
@@ -202,10 +288,10 @@ if st.button("🚨 Close the Case"):
 
         if correct == true_causes and not wrong:
             st.success(
-                "**Case fully closed.** You found all four biases: the founder bio's wording "
-                "silently boosts approval, solo founders (team_size == 1) take a hidden penalty, "
-                "large asks (>$1.2M) get quietly punished, and suspiciously high growth (>30%) "
-                "triggers rejection instead of reward."
+                f"**Case fully closed — {get_rank(submission_count)} confirmed.** You found all "
+                "four biases: the founder bio's wording silently boosts approval, solo founders "
+                "(team_size == 1) take a hidden penalty, large asks (>$1.2M) get quietly punished, "
+                "and suspiciously high growth (>30%) triggers rejection instead of reward."
             )
             st.balloons()
         elif correct:
