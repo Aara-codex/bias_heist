@@ -16,7 +16,7 @@ df = pd.read_csv("funding_data.csv")
 FEATURES = [
     "funding_ask", "team_size", "founder_experience_years",
     "industry_sector", "monthly_revenue", "revenue_growth_pct",
-    "network_score",
+    "referral_channel_score",
 ]
 X = df[FEATURES]
 y = df["approved"]
@@ -35,12 +35,11 @@ joblib.dump(model, "funding_model.pkl")
 print("Model trained and saved to funding_model.pkl")
 print(f"Training accuracy: {model.score(X, y):.3f}")
 
-# Facilitator-only sanity check: confirm network_score dominates
-import numpy as np
+# Facilitator-only sanity check: confirm referral_channel_score dominates
 sample = X.iloc[[0]].copy()
 sample["industry_sector"] = "Consumer Goods"
 for ns in [0.1, 0.9]:
     s = sample.copy()
-    s["network_score"] = ns
+    s["referral_channel_score"] = ns
     p = model.predict_proba(s)[0][1]
-    print(f"  Consumer Goods founder, network_score={ns}: approval prob = {p:.2f}")
+    print(f"  Consumer Goods founder, referral_channel_score={ns}: approval prob = {p:.2f}")

@@ -66,7 +66,7 @@ with left:
     )
     monthly_revenue = st.number_input("Monthly revenue ($)", 0, 500_000, 10_000, step=1_000)
     revenue_growth_pct = st.slider("Revenue growth (% MoM)", -50, 100, 8)
-    network_score = st.slider("Founder network strength", 0.0, 1.0, 0.5, step=0.01,
+    referral_channel_score = st.slider("Referral channel strength", 0.0, 1.0, 0.5, step=0.01,
                                help="Self-reported strength of the founder's professional network.")
 
     submit = st.button("▶ Submit to the Screener", use_container_width=True)
@@ -79,7 +79,7 @@ with left:
             "industry_sector": industry_sector,
             "monthly_revenue": monthly_revenue,
             "revenue_growth_pct": revenue_growth_pct,
-            "network_score": network_score,
+            "referral_channel_score": referral_channel_score,
         }])
         proba = model.predict_proba(row)[0][1]
         decision = "FUNDED ✅" if proba >= 0.5 else "REJECTED ❌"
@@ -107,8 +107,8 @@ with right:
                 key="color_by",
             )
             fig = px.scatter(
-                df, x="network_score", y="approval_prob", color=df[color_by].astype(str),
-                labels={"network_score": "Network Strength", "approval_prob": "Approval Probability",
+                df, x="referral_channel_score", y="approval_prob", color=df[color_by].astype(str),
+                labels={"referral_channel_score": "Referral Channel Score", "approval_prob": "Approval Probability",
                         "color": color_by},
                 template="plotly_dark",
             )
@@ -132,7 +132,7 @@ st.write("When you think you've cracked it, name the true driver of the model's 
 suspect = st.radio(
     "Prime suspect:",
     ["industry_sector", "funding_ask", "team_size", "founder_experience_years",
-     "monthly_revenue", "revenue_growth_pct", "network_score"],
+     "monthly_revenue", "revenue_growth_pct", "referral_channel_score"],
     horizontal=True,
 )
 reasoning = st.text_area("Your reasoning (what evidence points here?)", height=100)
@@ -140,9 +140,9 @@ reasoning = st.text_area("Your reasoning (what evidence points here?)", height=1
 if st.button("🚨 Close the Case"):
     if not reasoning.strip():
         st.warning("A good detective always shows their reasoning — write a line or two first.")
-    elif suspect == "network_score":
+    elif suspect == "referral_channel_score":
         st.success(
-            "**Case closed — you got it.** `network_score` is doing the heavy lifting. "
+            "**Case closed — you got it.** `referral_channel_score` is doing the heavy lifting. "
             "Sector looked guilty because it happened to correlate with network strength "
             "in this data — but it's not the cause on its own."
         )
@@ -150,6 +150,6 @@ if st.button("🚨 Close the Case"):
     else:
         st.error(
             f"**Not quite.** `{suspect}` isn't the real driver — it just looked suspicious. "
-            "Try holding it constant and varying `network_score` instead. Does the verdict "
+            "Try holding it constant and varying `referral_channel_score` instead. Does the verdict "
             "still flip even when your current suspect doesn't change?"
         )
