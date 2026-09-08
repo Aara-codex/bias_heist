@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -34,6 +35,35 @@ h1, h2, h3 { color: #f4c95d !important; font-family: 'Georgia', serif; }
 
 model = joblib.load("funding_model.pkl")
 
+# ---------- HIDDEN TEXT-PARSING LOGIC (facilitator mechanism, not shown to participants) ----------
+# Maps free-text founder bios into a referral_channel_score (0-1).
+# Participants never see this dict — they only see the score's effect
+# on the decision, and have to reverse-engineer which phrases matter.
+ELITE_SIGNALS = {
+    r"\by\s*combinator\b|\byc\b": 0.30,
+    r"\bstanford\b": 0.22,
+    r"\bharvard\b": 0.22,
+    r"\bmit\b": 0.20,
+    r"\bex[- ]google\b|\bex[- ]meta\b|\bex[- ]facebook\b|\bex[- ]amazon\b": 0.25,
+    r"\bsequoia\b|\ba16z\b|\bandreessen\b": 0.28,
+    r"\btechstars\b|\b500\s*startups\b": 0.18,
+    r"\bboard member\b|\badvisor to\b": 0.15,
+    r"\bfamily office\b|\bventure partner\b": 0.20,
+    r"\bforbes\s*30\s*under\s*30\b": 0.22,
+    r"\bivy league\b": 0.15,
+}
+BASELINE_SCORE = 0.15
+
+
+def compute_referral_score(bio_text: str) -> float:
+    text = (bio_text or "").lower()
+    score = BASELINE_SCORE
+    for pattern, weight in ELITE_SIGNALS.items():
+        if re.search(pattern, text):
+            score += weight
+    return min(score, 1.0)
+
+
 # ---------- HEADER / CASE BRIEFING ----------
 st.title("🕵️ BIAS HEIST: The Funding Files")
 
@@ -46,7 +76,9 @@ with st.container():
     is rigging the game, but the model is a black box: no code, no training data,
     no feature list. All you get is an interview room and a decision.<br><br>
     <b>Your job:</b> submit pitches, watch what the model does, and build a case
-    for what's <i>really</i> driving its decisions. When you're ready, file your accusation below.
+    for what's <i>really</i> driving its decisions. There may be more than one
+    thing going on — test full ranges, not just typical values. When you're
+    ready, file your accusation below.
     </div>
     """, unsafe_allow_html=True)
 
@@ -66,12 +98,17 @@ with left:
     )
     monthly_revenue = st.number_input("Monthly revenue ($)", 0, 500_000, 10_000, step=1_000)
     revenue_growth_pct = st.slider("Revenue growth (% MoM)", -50, 100, 8)
-    referral_channel_score = st.slider("Referral channel strength", 0.0, 1.0, 0.5, step=0.01,
-                               help="Self-reported strength of the founder's professional network.")
+    founder_bio = st.text_area(
+        "Describe the founder's background and network",
+        placeholder="e.g. Former product manager at a mid-size logistics company, "
+                    "built two prior startups, active in the local founder community...",
+        height=110,
+    )
 
     submit = st.button("▶ Submit to the Screener", use_container_width=True)
 
     if submit:
+        referral_channel_score = compute_referral_score(founder_bio)
         row = pd.DataFrame([{
             "funding_ask": funding_ask,
             "team_size": team_size,
@@ -108,13 +145,16 @@ with right:
             )
             fig = px.scatter(
                 df, x="referral_channel_score", y="approval_prob", color=df[color_by].astype(str),
-                labels={"referral_channel_score": "Referral Channel Score", "approval_prob": "Approval Probability",
-                        "color": color_by},
+                labels={"referral_channel_score": "Referral Channel Score (derived from bio)",
+                        "approval_prob": "Approval Probability", "color": color_by},
                 template="plotly_dark",
             )
             fig.update_layout(height=420, legend_title_text=color_by)
             st.plotly_chart(fig, use_container_width=True)
-            st.caption("Every pitch you've submitted, plotted. Look for what actually moves the dots up.")
+            st.caption(
+                "Every pitch you've submitted, plotted. The x-axis score is derived from "
+                "what you wrote in the founder bio — not something you set directly."
+            )
 
         with tab2:
             st.dataframe(df, use_container_width=True, height=380)
@@ -127,29 +167,58 @@ st.divider()
 
 # ---------- ACCUSATION ----------
 st.subheader("🔦 File Your Accusation")
-st.write("When you think you've cracked it, name the true driver of the model's decisions.")
-
-suspect = st.radio(
-    "Prime suspect:",
-    ["industry_sector", "funding_ask", "team_size", "founder_experience_years",
-     "monthly_revenue", "revenue_growth_pct", "referral_channel_score"],
-    horizontal=True,
+st.write(
+    "When you think you've cracked it, name what's really driving the model's "
+    "decisions. Select everything you believe is a real cause — there may be more than one."
 )
+
+CAUSES = {
+    "industry_sector": False,
+    "funding_ask (general amount, under ~$1.2M)": False,
+    "funding_ask > ~$1.2M specifically (large-ask penalty)": True,
+    "team_size (general trend, sizes 2+)": False,
+    "team_size == 1 specifically (solo founders)": True,
+    "founder_experience_years": False,
+    "monthly_revenue": False,
+    "revenue_growth_pct (general trend, under ~30%)": False,
+    "revenue_growth_pct > ~30% specifically (too-good-to-be-true penalty)": True,
+    "founder bio wording / referral score": True,
+}
+
+suspects = st.multiselect("Select all true causes you've found evidence for:", list(CAUSES.keys()))
 reasoning = st.text_area("Your reasoning (what evidence points here?)", height=100)
 
 if st.button("🚨 Close the Case"):
     if not reasoning.strip():
         st.warning("A good detective always shows their reasoning — write a line or two first.")
-    elif suspect == "referral_channel_score":
-        st.success(
-            "**Case closed — you got it.** `referral_channel_score` is doing the heavy lifting. "
-            "Sector looked guilty because it happened to correlate with network strength "
-            "in this data — but it's not the cause on its own."
-        )
-        st.balloons()
+    elif not suspects:
+        st.warning("Select at least one suspect before filing your accusation.")
     else:
-        st.error(
-            f"**Not quite.** `{suspect}` isn't the real driver — it just looked suspicious. "
-            "Try holding it constant and varying `referral_channel_score` instead. Does the verdict "
-            "still flip even when your current suspect doesn't change?"
-        )
+        true_causes = {k for k, v in CAUSES.items() if v}
+        picked = set(suspects)
+        correct = picked & true_causes
+        missed = true_causes - picked
+        wrong = picked - true_causes
+
+        if correct == true_causes and not wrong:
+            st.success(
+                "**Case fully closed.** You found all four biases: the founder bio's wording "
+                "silently boosts approval, solo founders (team_size == 1) take a hidden penalty, "
+                "large asks (>$1.2M) get quietly punished, and suspiciously high growth (>30%) "
+                "triggers rejection instead of reward."
+            )
+            st.balloons()
+        elif correct:
+            msg = f"**Partial credit.** You correctly identified: {', '.join(correct)}."
+            if missed:
+                msg += f" Still out there: {len(missed)} more real cause(s) — keep testing."
+            if wrong:
+                msg += f" Also, {', '.join(wrong)} looked suspicious but isn't actually causal on its own."
+            st.warning(msg)
+        else:
+            st.error(
+                "**Not quite.** None of your picks are the real drivers — they just looked "
+                "suspicious. Try isolating one variable at a time: same bio, only sector changes; "
+                "same everything, only team_size changes (try 1 vs 2 specifically); same everything, "
+                "only the bio wording changes."
+            )
