@@ -62,18 +62,20 @@ h1, h2, h3 { color: #f4c95d !important; font-family: 'Georgia', serif; }
 model = joblib.load("funding_model.pkl")
 
 # ---------- HIDDEN TEXT-PARSING LOGIC (facilitator mechanism, not shown to participants) ----------
-ELITE_SIGNALS = {
-    r"\by\s*combinator\b|\byc\b": 0.30,
-    r"\bstanford\b": 0.22,
-    r"\bharvard\b": 0.22,
-    r"\bmit\b": 0.20,
-    r"\bex[- ]google\b|\bex[- ]meta\b|\bex[- ]facebook\b|\bex[- ]amazon\b": 0.25,
-    r"\bsequoia\b|\ba16z\b|\bandreessen\b": 0.28,
-    r"\btechstars\b|\b500\s*startups\b": 0.18,
-    r"\bboard member\b|\badvisor to\b": 0.15,
-    r"\bfamily office\b|\bventure partner\b": 0.20,
-    r"\bforbes\s*30\s*under\s*30\b": 0.22,
-    r"\bivy league\b": 0.15,
+# Rewards CATEGORIES of claims, not specific brand/institution names — so the
+# pattern is discoverable by testing natural ideas (mentioning prior founder
+# experience, funding raised, an advisor role, etc.) rather than needing to
+# guess which exact company or school is on a hidden list.
+CATEGORY_SIGNALS = {
+    "prior_founder": (r"\b(founder|co[- ]founder|founded|built\s+(a|two|three|multiple)\s+"
+                       r"(startup|compan))", 0.16),
+    "advisor_or_board": (r"\b(advisor|advised|board member|mentor(ed)?)\b", 0.16),
+    "funding_raised": (r"\braised\b", 0.15),
+    "accelerator": (r"\b(accelerator|incubator|incubated)\b", 0.16),
+    "media_coverage": (r"\b(featured|press coverage|media coverage|profiled)\b", 0.13),
+    "education_credential": (r"\b(mba|iim|iit|premier institute|top university|"
+                              r"graduate degree|postgraduate)\b", 0.15),
+    "years_experience_number": (r"\b\d{1,2}\+?\s*years?\b", 0.13),
 }
 BASELINE_SCORE = 0.15
 
@@ -81,7 +83,7 @@ BASELINE_SCORE = 0.15
 def compute_referral_score(bio_text: str) -> float:
     text = (bio_text or "").lower()
     score = BASELINE_SCORE
-    for pattern, weight in ELITE_SIGNALS.items():
+    for _label, (pattern, weight) in CATEGORY_SIGNALS.items():
         if re.search(pattern, text):
             score += weight
     return min(score, 1.0)
@@ -105,7 +107,7 @@ INTEL = [
         "numbers... some get penalized for looking *too* good, not too weak.\""),
     (12, "A rejected founder's complaint email: \"My co-founder left last month and "
         "suddenly our score tanked — nothing else about the business changed.\""),
-    (16, "A partner's voicemail transcript: \"...told them a seven-figure ask spooks "
+    (16, "A partner's voicemail transcript: \"...told them a nine-figure ask spooks "
         "the committee no matter how clean the books are.\""),
 ]
 
@@ -152,19 +154,21 @@ left, right = st.columns([1, 1.3])
 
 with left:
     st.subheader("🎙️ Interview a Pitch")
-    funding_ask = st.number_input("Funding ask ($)", 10_000, 5_000_000, 250_000, step=10_000)
+    funding_ask = st.number_input("Funding ask (₹)", 50_000, 5_00_00_000, 25_00_000, step=1_00_000,
+                                   help="e.g. 2500000 = ₹25 Lakh")
     team_size = st.slider("Team size", 1, 15, 4)
     founder_experience_years = st.slider("Founder experience (years)", 0, 20, 5)
     industry_sector = st.selectbox(
         "Industry sector",
         ["Fintech", "HealthTech", "EdTech", "E-commerce", "SaaS", "Consumer Goods"],
     )
-    monthly_revenue = st.number_input("Monthly revenue ($)", 0, 500_000, 10_000, step=1_000)
+    monthly_revenue = st.number_input("Monthly revenue (₹)", 0, 50_00_000, 1_00_000, step=10_000,
+                                       help="e.g. 100000 = ₹1 Lakh")
     revenue_growth_pct = st.slider("Revenue growth (% MoM)", -50, 100, 8)
     founder_bio = st.text_area(
         "Describe the founder's background and network",
-        placeholder="e.g. Former product manager at a mid-size logistics company, "
-                    "built two prior startups, active in the local founder community...",
+        placeholder="e.g. Founded two prior startups, raised seed funding for the first one, "
+                    "now advises early-stage teams and has 8 years of industry experience...",
         height=110,
     )
 
@@ -260,8 +264,8 @@ st.write(
 
 CAUSES = {
     "industry_sector": False,
-    "funding_ask (general amount, under ~$1.2M)": False,
-    "funding_ask > ~$1.2M specifically (large-ask penalty)": True,
+    "funding_ask (general amount, under ~₹3 Crore)": False,
+    "funding_ask > ~₹3 Crore specifically (large-ask penalty)": True,
     "team_size (general trend, sizes 2+)": False,
     "team_size == 1 specifically (solo founders)": True,
     "founder_experience_years": False,
@@ -290,7 +294,7 @@ if st.button("🚨 Close the Case"):
             st.success(
                 f"**Case fully closed — {get_rank(submission_count)} confirmed.** You found all "
                 "four biases: the founder bio's wording silently boosts approval, solo founders "
-                "(team_size == 1) take a hidden penalty, large asks (>$1.2M) get quietly punished, "
+                "(team_size == 1) take a hidden penalty, large asks (>₹3 Crore) get quietly punished, "
                 "and suspiciously high growth (>30%) triggers rejection instead of reward."
             )
             st.balloons()

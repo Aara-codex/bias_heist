@@ -61,7 +61,7 @@ SECTOR_BIAS = {
 }
 
 SOLO_FOUNDER_PENALTY = 0.20      # applied only when team_size == 1
-LARGE_ASK_THRESHOLD = 1_200_000
+LARGE_ASK_THRESHOLD = 3_00_00_000  # ₹3 Crore
 LARGE_ASK_PENALTY = 0.15
 GROWTH_SUSPICION_THRESHOLD = 30  # % MoM
 GROWTH_SUSPICION_PENALTY = 0.16
@@ -75,9 +75,11 @@ def generate():
     team_nudge = 0.015 * (team_size - team_size.mean())
     referral_score = np.clip(sector_base + team_nudge + RNG.normal(0, 0.22, N), 0, 1)
 
-    funding_ask = np.round(RNG.uniform(50_000, 2_000_000, N), -3)
+    # Funding ask: ₹5 Lakh to ₹5 Crore (typical Indian seed/Series-A range)
+    funding_ask = np.round(RNG.uniform(5_00_000, 5_00_00_000, N), -4)
     founder_experience = RNG.integers(0, 20, N)
-    monthly_revenue = np.round(RNG.exponential(15_000, N), 0)
+    # Monthly revenue: ₹0 to a long tail up to ~₹20 Lakh+, mean ~₹1.5 Lakh
+    monthly_revenue = np.round(RNG.exponential(1_50_000, N), 0)
     revenue_growth = np.round(RNG.normal(8, 15, N), 1)  # can be negative, occasionally > 60
 
     # --- Hidden label logic ---
@@ -120,7 +122,7 @@ if __name__ == "__main__":
     print(df.groupby("industry_sector")["approved"].mean().sort_values(ascending=False))
     print("\nSolo founders (team_size==1) vs rest:")
     print(df.assign(solo=df.team_size == 1).groupby("solo")["approved"].mean())
-    print("\nLarge ask (>$1.2M) vs rest:")
-    print(df.assign(big=df.funding_ask > 1_200_000).groupby("big")["approved"].mean())
+    print("\nLarge ask (>₹3 Crore) vs rest:")
+    print(df.assign(big=df.funding_ask > 3_00_00_000).groupby("big")["approved"].mean())
     print("\nHigh growth (>30%) vs rest:")
     print(df.assign(hot=df.revenue_growth_pct > 30).groupby("hot")["approved"].mean())
