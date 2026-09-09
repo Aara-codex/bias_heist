@@ -62,31 +62,47 @@ h1, h2, h3 { color: #f4c95d !important; font-family: 'Georgia', serif; }
 model = joblib.load("funding_model.pkl")
 
 # ---------- HIDDEN TEXT-PARSING LOGIC (facilitator mechanism, not shown to participants) ----------
-# Rewards CATEGORIES of claims, not specific brand/institution names — so the
-# pattern is discoverable by testing natural ideas (mentioning prior founder
-# experience, funding raised, an advisor role, etc.) rather than needing to
-# guess which exact company or school is on a hidden list.
-CATEGORY_SIGNALS = {
-    "prior_founder": (r"\b(founder|co[- ]founder|founded|built\s+(a|two|three|multiple)\s+"
-                       r"(startup|compan))", 0.16),
-    "advisor_or_board": (r"\b(advisor|advised|board member|mentor(ed)?)\b", 0.16),
-    "funding_raised": (r"\braised\b", 0.15),
-    "accelerator": (r"\b(accelerator|incubator|incubated)\b", 0.16),
-    "media_coverage": (r"\b(featured|press coverage|media coverage|profiled)\b", 0.13),
-    "education_credential": (r"\b(mba|iim|iit|premier institute|top university|"
-                              r"graduate degree|postgraduate)\b", 0.15),
-    "years_experience_number": (r"\b\d{1,2}\+?\s*years?\b", 0.13),
-}
-BASELINE_SCORE = 0.15
+# Three fields are free-text "describe it in a sentence" prompts. Each is
+# parsed using intuitive, guessable cues (real numbers, common city names,
+# standard startup-funding terms) — NOT obscure trivia — so anyone can
+# discover the pattern just by trying natural phrasings.
+
+METRO_CITIES = ["mumbai", "delhi", "bangalore", "bengaluru", "hyderabad",
+                "chennai", "pune", "kolkata", "gurgaon", "gurugram", "noida"]
+TIER2_CITIES = ["jaipur", "lucknow", "indore", "chandigarh", "ahmedabad",
+                "nagpur", "bhopal", "coimbatore", "kochi", "surat"]
 
 
-def compute_referral_score(bio_text: str) -> float:
-    text = (bio_text or "").lower()
-    score = BASELINE_SCORE
-    for _label, (pattern, weight) in CATEGORY_SIGNALS.items():
-        if re.search(pattern, text):
-            score += weight
-    return min(score, 1.0)
+def parse_location_tier(text: str) -> str:
+    t = (text or "").lower()
+    if any(city in t for city in METRO_CITIES):
+        return "Metro"
+    if any(city in t for city in TIER2_CITIES):
+        return "Tier-2 City"
+    return "Tier-3 City"
+
+
+def parse_company_age_months(text: str) -> int:
+    t = (text or "").lower()
+    m = re.search(r"(\d+)\s*year", t)
+    if m:
+        return min(int(m.group(1)) * 12, 96)
+    m = re.search(r"(\d+)\s*month", t)
+    if m:
+        return min(int(m.group(1)), 96)
+    return 12  # default: assume ~1 year if nothing parseable
+
+
+FUNDING_ROUND_TERMS = ["pre-seed", "preseed", "seed round", "angel round",
+                       "series a", "series b", "bridge round", "seed funding"]
+
+
+def parse_prior_funding_rounds(text: str) -> int:
+    t = (text or "").lower()
+    hits = sum(1 for term in FUNDING_ROUND_TERMS if term in t)
+    if "no prior funding" in t or "bootstrapped" in t or "self-funded" in t:
+        return 0
+    return min(hits, 3)
 
 
 # ---------- DETECTIVE RANK SYSTEM ----------
@@ -110,7 +126,6 @@ INTEL = [
     (16, "A partner's voicemail transcript: \"...told them a nine-figure ask spooks "
         "the committee no matter how clean the books are.\""),
 ]
-
 
 def get_rank(count):
     rank = RANKS[0][1]
@@ -165,24 +180,40 @@ with left:
     monthly_revenue = st.number_input("Monthly revenue (₹)", 0, 50_00_000, 1_00_000, step=10_000,
                                        help="e.g. 100000 = ₹1 Lakh")
     revenue_growth_pct = st.slider("Revenue growth (% MoM)", -50, 100, 8)
-    founder_bio = st.text_area(
-        "Describe the founder's background and network",
-        placeholder="e.g. Founded two prior startups, raised seed funding for the first one, "
-                    "now advises early-stage teams and has 8 years of industry experience...",
-        height=110,
+    referral_channel_score = st.slider(
+        "Founder network strength", 0.0, 1.0, 0.5, step=0.01,
+        help="Self-reported strength of the founder's professional network.",
+    )
+    location_text = st.text_input(
+        "Where is the company headquartered?",
+        placeholder="e.g. We're based out of Mumbai",
+    )
+    age_text = st.text_input(
+        "How long has the company been operating?",
+        placeholder="e.g. About 2 years",
+    )
+    funding_history_text = st.text_input(
+        "Briefly describe the company's funding history so far",
+        placeholder="e.g. Bootstrapped so far / Raised a seed round last year",
     )
 
     submit = st.button("▶ Submit to the Screener", use_container_width=True)
 
     if submit:
-        referral_channel_score = compute_referral_score(founder_bio)
+        location_tier = parse_location_tier(location_text)
+        company_age_months = parse_company_age_months(age_text)
+        prior_funding_rounds = parse_prior_funding_rounds(funding_history_text)
+
         row = pd.DataFrame([{
             "funding_ask": funding_ask,
             "team_size": team_size,
             "founder_experience_years": founder_experience_years,
             "industry_sector": industry_sector,
+            "location_tier": location_tier,
             "monthly_revenue": monthly_revenue,
             "revenue_growth_pct": revenue_growth_pct,
+            "company_age_months": company_age_months,
+            "prior_funding_rounds": prior_funding_rounds,
             "referral_channel_score": referral_channel_score,
         }])
         proba = model.predict_proba(row)[0][1]
@@ -214,20 +245,20 @@ with right:
         with tab1:
             color_by = st.selectbox(
                 "Color evidence by:",
-                ["industry_sector", "team_size", "founder_experience_years"],
+                ["industry_sector", "location_tier", "team_size", "founder_experience_years",
+                 "prior_funding_rounds"],
                 key="color_by",
             )
             fig = px.scatter(
                 df, x="referral_channel_score", y="approval_prob", color=df[color_by].astype(str),
-                labels={"referral_channel_score": "Referral Channel Score (derived from bio)",
+                labels={"referral_channel_score": "Founder Network Strength",
                         "approval_prob": "Approval Probability", "color": color_by},
                 template="plotly_dark",
             )
             fig.update_layout(height=420, legend_title_text=color_by)
             st.plotly_chart(fig, use_container_width=True)
             st.caption(
-                "Every pitch you've submitted, plotted. The x-axis score is derived from "
-                "what you wrote in the founder bio — not something you set directly."
+                "Every pitch you've submitted, plotted."
             )
 
         with tab2:
@@ -264,19 +295,22 @@ st.write(
 
 CAUSES = {
     "industry_sector": False,
-    "funding_ask (general amount, under ~₹3 Crore)": False,
-    "funding_ask > ~₹3 Crore specifically (large-ask penalty)": True,
-    "team_size (general trend, sizes 2+)": False,
-    "team_size == 1 specifically (solo founders)": True,
+    "funding_ask": True,
+    "team_size": True,
     "founder_experience_years": False,
+    "location_tier": False,
     "monthly_revenue": False,
-    "revenue_growth_pct (general trend, under ~30%)": False,
-    "revenue_growth_pct > ~30% specifically (too-good-to-be-true penalty)": True,
-    "founder bio wording / referral score": True,
+    "revenue_growth_pct": True,
+    "company_age_months": False,
+    "prior_funding_rounds": False,
+    "founder network strength": True,
 }
 
-suspects = st.multiselect("Select all true causes you've found evidence for:", list(CAUSES.keys()))
-reasoning = st.text_area("Your reasoning (what evidence points here?)", height=100)
+suspects = st.multiselect("Select all features you believe are real causes:", list(CAUSES.keys()))
+reasoning = st.text_area(
+    "Your reasoning — be specific (what values did you test? what pattern did you find?)",
+    height=120,
+)
 
 if st.button("🚨 Close the Case"):
     if not reasoning.strip():
@@ -292,23 +326,22 @@ if st.button("🚨 Close the Case"):
 
         if correct == true_causes and not wrong:
             st.success(
-                f"**Case fully closed — {get_rank(submission_count)} confirmed.** You found all "
-                "four biases: the founder bio's wording silently boosts approval, solo founders "
-                "(team_size == 1) take a hidden penalty, large asks (>₹3 Crore) get quietly punished, "
-                "and suspiciously high growth (>30%) triggers rejection instead of reward."
+                f"**Strong case — {get_rank(submission_count)} confirmed.** You've named all the "
+                "real drivers. Make sure your written reasoning above spells out the *exact* pattern "
+                "for each one (a specific threshold, a specific value, or a specific kind of wording) "
+                "— that's what judges will be checking for full marks."
             )
             st.balloons()
         elif correct:
-            msg = f"**Partial credit.** You correctly identified: {', '.join(correct)}."
+            msg = f"**Partial credit.** You correctly flagged: {', '.join(correct)}."
             if missed:
-                msg += f" Still out there: {len(missed)} more real cause(s) — keep testing."
+                msg += f" There's still {len(missed)} more real cause(s) hiding in the data — keep testing."
             if wrong:
-                msg += f" Also, {', '.join(wrong)} looked suspicious but isn't actually causal on its own."
+                msg += f" Also, {', '.join(wrong)} looked suspicious in your tests, but isn't independently causal — try isolating it from other variables."
             st.warning(msg)
         else:
             st.error(
-                "**Not quite.** None of your picks are the real drivers — they just looked "
-                "suspicious. Try isolating one variable at a time: same bio, only sector changes; "
-                "same everything, only team_size changes (try 1 vs 2 specifically); same everything, "
-                "only the bio wording changes."
+                "**Not quite.** None of your picks are the real drivers on their own — they just "
+                "looked suspicious. Try isolating one variable at a time: change only one field "
+                "per test, and try extreme values, not just typical ones."
             )
