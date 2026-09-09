@@ -105,6 +105,31 @@ def parse_prior_funding_rounds(text: str) -> int:
     return min(hits, 3)
 
 
+ORIGIN_TERMS = {
+    "Personal/Family Network": ["family", "childhood friend", "relative"],
+    "College or Hackathon": ["college", "university", "hackathon", "classmate"],
+    "Professional Network": ["former colleague", "coworker", "ex-colleague", "worked together"],
+}
+
+
+def parse_team_origin(text: str) -> str:
+    t = (text or "").lower()
+    for origin, terms in ORIGIN_TERMS.items():
+        if any(term in t for term in terms):
+            return origin
+    return "Professional Network"  # default assumption
+
+
+VALIDATION_TERMS = ["customer interview", "pre-order", "preorder", "waitlist",
+                     "pilot", "letter of intent", " loi", "beta test", "beta user",
+                     "paying customer", "signed up"]
+
+
+def parse_has_validation(text: str) -> bool:
+    t = (text or "").lower()
+    return any(term in t for term in VALIDATION_TERMS)
+
+
 # ---------- DETECTIVE RANK SYSTEM ----------
 RANKS = [
     (0, "🥚 Rookie"),
@@ -122,9 +147,13 @@ INTEL = [
     (8, "Overheard in a Slack leak: \"We tell founders not to oversell their growth "
         "numbers... some get penalized for looking *too* good, not too weak.\""),
     (12, "A rejected founder's complaint email: \"My co-founder left last month and "
-        "suddenly our score tanked — nothing else about the business changed.\""),
+        "our score tanked — but a friend who's ALSO solo and well-connected got "
+        "funded fine. Isn't just about team size, is it?\""),
     (16, "A partner's voicemail transcript: \"...told them a nine-figure ask spooks "
         "the committee no matter how clean the books are.\""),
+    (20, "A skeptical board member's email: \"This company's been around three years "
+        "and still can't point to a single customer conversation or pilot. That's "
+        "the real red flag — not the age itself.\""),
 ]
 
 def get_rank(count):
@@ -156,9 +185,10 @@ with st.container():
     no feature list. All you get is an interview room and a decision.<br><br>
     <b>Your job:</b> submit pitches, watch what the model does, and build a case
     for what's <i>really</i> driving its decisions. There may be more than one
-    thing going on — test full ranges, not just typical values. Keep investigating:
-    new intel surfaces the deeper you dig. When you're ready, file your
-    accusation below.
+    thing going on — and some effects only show up when you change TWO fields
+    together, not one at a time. Test full ranges AND combinations. Keep
+    investigating: new intel surfaces the deeper you dig. When you're ready,
+    file your accusation below.
     </div>
     """, unsafe_allow_html=True)
 
@@ -196,6 +226,14 @@ with left:
         "Briefly describe the company's funding history so far",
         placeholder="e.g. Bootstrapped so far / Raised a seed round last year",
     )
+    team_origin_text = st.text_input(
+        "How did the founding team come together?",
+        placeholder="e.g. We met in college / We were colleagues at our last job",
+    )
+    validation_text = st.text_input(
+        "How did you validate the idea before building it?",
+        placeholder="e.g. Ran customer interviews and built a waitlist / Haven't yet, just an idea",
+    )
 
     submit = st.button("▶ Submit to the Screener", use_container_width=True)
 
@@ -203,6 +241,8 @@ with left:
         location_tier = parse_location_tier(location_text)
         company_age_months = parse_company_age_months(age_text)
         prior_funding_rounds = parse_prior_funding_rounds(funding_history_text)
+        team_origin = parse_team_origin(team_origin_text)
+        has_validation = parse_has_validation(validation_text)
 
         row = pd.DataFrame([{
             "funding_ask": funding_ask,
@@ -210,10 +250,12 @@ with left:
             "founder_experience_years": founder_experience_years,
             "industry_sector": industry_sector,
             "location_tier": location_tier,
+            "team_origin": team_origin,
             "monthly_revenue": monthly_revenue,
             "revenue_growth_pct": revenue_growth_pct,
             "company_age_months": company_age_months,
             "prior_funding_rounds": prior_funding_rounds,
+            "has_validation": has_validation,
             "referral_channel_score": referral_channel_score,
         }])
         proba = model.predict_proba(row)[0][1]
@@ -245,8 +287,8 @@ with right:
         with tab1:
             color_by = st.selectbox(
                 "Color evidence by:",
-                ["industry_sector", "location_tier", "team_size", "founder_experience_years",
-                 "prior_funding_rounds"],
+                ["industry_sector", "location_tier", "team_origin", "team_size",
+                 "founder_experience_years", "prior_funding_rounds", "has_validation"],
                 key="color_by",
             )
             fig = px.scatter(
@@ -299,10 +341,12 @@ CAUSES = {
     "team_size": True,
     "founder_experience_years": False,
     "location_tier": False,
+    "team_origin": False,
     "monthly_revenue": False,
     "revenue_growth_pct": True,
-    "company_age_months": False,
+    "company_age_months": True,
     "prior_funding_rounds": False,
+    "has_validation": True,
     "founder network strength": True,
 }
 
@@ -327,21 +371,23 @@ if st.button("🚨 Close the Case"):
         if correct == true_causes and not wrong:
             st.success(
                 f"**Strong case — {get_rank(submission_count)} confirmed.** You've named all the "
-                "real drivers. Make sure your written reasoning above spells out the *exact* pattern "
-                "for each one (a specific threshold, a specific value, or a specific kind of wording) "
-                "— that's what judges will be checking for full marks."
+                "real drivers. Note: two of them only reveal themselves as COMBINATIONS of two "
+                "fields, not single-variable thresholds — make sure your written reasoning spells "
+                "out which pairs of conditions matter together, not just which single fields."
             )
             st.balloons()
         elif correct:
             msg = f"**Partial credit.** You correctly flagged: {', '.join(correct)}."
             if missed:
-                msg += f" There's still {len(missed)} more real cause(s) hiding in the data — keep testing."
+                msg += (f" There's still {len(missed)} more real cause(s) hiding in the data — "
+                        "and at least one only shows up when you test TWO fields together, not one at a time.")
             if wrong:
                 msg += f" Also, {', '.join(wrong)} looked suspicious in your tests, but isn't independently causal — try isolating it from other variables."
             st.warning(msg)
         else:
             st.error(
                 "**Not quite.** None of your picks are the real drivers on their own — they just "
-                "looked suspicious. Try isolating one variable at a time: change only one field "
-                "per test, and try extreme values, not just typical ones."
+                "looked suspicious. Try isolating one variable at a time first — but if a field seems "
+                "to do nothing in isolation, don't rule it out yet. Some effects only appear when you "
+                "change TWO fields together and compare against changing just one."
             )
