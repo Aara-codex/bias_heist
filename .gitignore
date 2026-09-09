@@ -1,1 +1,3 @@
-.venv/ __pycache__/ FACILATOR_ANSWER_KEY.md
+.venv/
+__pycache__/
+key.md

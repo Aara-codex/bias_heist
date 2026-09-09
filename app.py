@@ -105,21 +105,6 @@ def parse_prior_funding_rounds(text: str) -> int:
     return min(hits, 3)
 
 
-ORIGIN_TERMS = {
-    "Personal/Family Network": ["family", "childhood friend", "relative"],
-    "College or Hackathon": ["college", "university", "hackathon", "classmate"],
-    "Professional Network": ["former colleague", "coworker", "ex-colleague", "worked together"],
-}
-
-
-def parse_team_origin(text: str) -> str:
-    t = (text or "").lower()
-    for origin, terms in ORIGIN_TERMS.items():
-        if any(term in t for term in terms):
-            return origin
-    return "Professional Network"  # default assumption
-
-
 VALIDATION_TERMS = ["customer interview", "pre-order", "preorder", "waitlist",
                      "pilot", "letter of intent", " loi", "beta test", "beta user",
                      "paying customer", "signed up"]
@@ -185,10 +170,8 @@ with st.container():
     no feature list. All you get is an interview room and a decision.<br><br>
     <b>Your job:</b> submit pitches, watch what the model does, and build a case
     for what's <i>really</i> driving its decisions. There may be more than one
-    thing going on — and some effects only show up when you change TWO fields
-    together, not one at a time. Test full ranges AND combinations. Keep
-    investigating: new intel surfaces the deeper you dig. When you're ready,
-    file your accusation below.
+    thing going on. Keep investigating: new intel surfaces the deeper you dig.
+    When you're ready, file your accusation below.
     </div>
     """, unsafe_allow_html=True)
 
@@ -226,10 +209,6 @@ with left:
         "Briefly describe the company's funding history so far",
         placeholder="e.g. Bootstrapped so far / Raised a seed round last year",
     )
-    team_origin_text = st.text_input(
-        "How did the founding team come together?",
-        placeholder="e.g. We met in college / We were colleagues at our last job",
-    )
     validation_text = st.text_input(
         "How did you validate the idea before building it?",
         placeholder="e.g. Ran customer interviews and built a waitlist / Haven't yet, just an idea",
@@ -241,7 +220,6 @@ with left:
         location_tier = parse_location_tier(location_text)
         company_age_months = parse_company_age_months(age_text)
         prior_funding_rounds = parse_prior_funding_rounds(funding_history_text)
-        team_origin = parse_team_origin(team_origin_text)
         has_validation = parse_has_validation(validation_text)
 
         row = pd.DataFrame([{
@@ -250,7 +228,6 @@ with left:
             "founder_experience_years": founder_experience_years,
             "industry_sector": industry_sector,
             "location_tier": location_tier,
-            "team_origin": team_origin,
             "monthly_revenue": monthly_revenue,
             "revenue_growth_pct": revenue_growth_pct,
             "company_age_months": company_age_months,
@@ -287,7 +264,7 @@ with right:
         with tab1:
             color_by = st.selectbox(
                 "Color evidence by:",
-                ["industry_sector", "location_tier", "team_origin", "team_size",
+                ["industry_sector", "location_tier", "team_size",
                  "founder_experience_years", "prior_funding_rounds", "has_validation"],
                 key="color_by",
             )
@@ -336,12 +313,11 @@ st.write(
 )
 
 CAUSES = {
-    "industry_sector": False,
+    "industry_sector": True,
     "funding_ask": True,
     "team_size": True,
     "founder_experience_years": False,
-    "location_tier": False,
-    "team_origin": False,
+    "location_tier": True,
     "monthly_revenue": False,
     "revenue_growth_pct": True,
     "company_age_months": True,
@@ -371,23 +347,19 @@ if st.button("🚨 Close the Case"):
         if correct == true_causes and not wrong:
             st.success(
                 f"**Strong case — {get_rank(submission_count)} confirmed.** You've named all the "
-                "real drivers. Note: two of them only reveal themselves as COMBINATIONS of two "
-                "fields, not single-variable thresholds — make sure your written reasoning spells "
-                "out which pairs of conditions matter together, not just which single fields."
+                "real drivers. Make sure your written reasoning above spells out the exact pattern "
+                "for each one — that's what judges will be checking for full marks."
             )
             st.balloons()
         elif correct:
             msg = f"**Partial credit.** You correctly flagged: {', '.join(correct)}."
             if missed:
-                msg += (f" There's still {len(missed)} more real cause(s) hiding in the data — "
-                        "and at least one only shows up when you test TWO fields together, not one at a time.")
+                msg += f" There's still {len(missed)} more real cause(s) hiding in the data — keep testing."
             if wrong:
-                msg += f" Also, {', '.join(wrong)} looked suspicious in your tests, but isn't independently causal — try isolating it from other variables."
+                msg += f" Also, {', '.join(wrong)} looked suspicious in your tests, but isn't independently causal."
             st.warning(msg)
         else:
             st.error(
                 "**Not quite.** None of your picks are the real drivers on their own — they just "
-                "looked suspicious. Try isolating one variable at a time first — but if a field seems "
-                "to do nothing in isolation, don't rule it out yet. Some effects only appear when you "
-                "change TWO fields together and compare against changing just one."
+                "looked suspicious. Keep testing systematically and see what actually moves the decision."
             )
