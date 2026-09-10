@@ -14,6 +14,53 @@ st.markdown("""
     color: #e8e8e8;
 }
 h1, h2, h3 { color: #f4c95d !important; font-family: 'Georgia', serif; }
+
+/* Widget labels sit on the dark background — keep them light */
+label, [data-testid="stWidgetLabel"] label, [data-testid="stWidgetLabel"] p {
+    color: #f0f0f5 !important;
+}
+
+/* Text/number inputs, textareas, and dropdowns keep a LIGHT background by
+   default — so their text must stay DARK, not inherit the app's light
+   text color, or it becomes invisible (light-on-light). */
+input, textarea, select,
+[data-baseweb="input"] input, [data-baseweb="textarea"] textarea,
+[data-baseweb="select"] * {
+    color: #16162a !important;
+}
+input::placeholder, textarea::placeholder {
+    color: #6a6a7a !important;
+    opacity: 1 !important;
+}
+
+/* Slider tick labels and the floating current-value bubble */
+[data-testid="stTickBar"] *,
+[data-testid="stSliderTickBarMin"],
+[data-testid="stSliderTickBarMax"] {
+    color: #e8e8e8 !important;
+}
+[data-testid="stThumbValue"] {
+    color: #f4c95d !important;
+    font-weight: 700 !important;
+}
+
+/* Alert/remark boxes (success, warning, error, info) have light pastel
+   backgrounds even in dark mode — force dark text so it stays legible */
+[data-testid="stAlert"], [data-testid="stAlert"] p, [data-testid="stAlert"] div,
+[data-testid="stAlert"] span {
+    color: #16162a !important;
+}
+
+/* Multiselect selected-item tags */
+[data-baseweb="tag"] span { color: #16162a !important; }
+
+/* Dataframe / table text (Full Log tab) */
+[data-testid="stDataFrame"] * { color: #16162a !important; }
+
+.stCaption, [data-testid="stCaptionContainer"] {
+    color: #a8a8bc !important;
+}
+[data-testid="stMetricLabel"] { color: #c8c8d8 !important; }
 .case-file {
     background: #16162a;
     border: 1px solid #f4c95d55;
@@ -115,6 +162,33 @@ def parse_has_validation(text: str) -> bool:
     return any(term in t for term in VALIDATION_TERMS)
 
 
+def parse_experience_years(text: str) -> int:
+    t = (text or "").lower()
+    m = re.search(r"(\d{1,2})\s*\+?\s*years?", t)
+    if m:
+        return min(int(m.group(1)), 20)
+    return 3  # default: assume modest experience if unparseable
+
+
+def parse_monthly_revenue(text: str) -> int:
+    t = (text or "").lower().replace(",", "")
+    m = re.search(r"(\d+(?:\.\d+)?)\s*crore", t)
+    if m:
+        return min(int(float(m.group(1)) * 1_00_00_000), 50_00_000)
+    m = re.search(r"(\d+(?:\.\d+)?)\s*lakh", t)
+    if m:
+        return min(int(float(m.group(1)) * 1_00_000), 50_00_000)
+    m = re.search(r"(\d+(?:\.\d+)?)\s*k\b", t)
+    if m:
+        return min(int(float(m.group(1)) * 1_000), 50_00_000)
+    m = re.search(r"(?:₹|rs\.?|inr)?\s*(\d{4,9})", t)
+    if m:
+        return min(int(m.group(1)), 50_00_000)
+    if "no revenue" in t or "pre-revenue" in t or "not yet" in t:
+        return 0
+    return 50_000  # default: modest revenue if unparseable
+
+
 # ---------- DETECTIVE RANK SYSTEM ----------
 RANKS = [
     (0, "🥚 Rookie"),
@@ -185,13 +259,18 @@ with left:
     funding_ask = st.number_input("Funding ask (₹)", 50_000, 5_00_00_000, 25_00_000, step=1_00_000,
                                    help="e.g. 2500000 = ₹25 Lakh")
     team_size = st.slider("Team size", 1, 15, 4)
-    founder_experience_years = st.slider("Founder experience (years)", 0, 20, 5)
+    experience_text = st.text_input(
+        "Tell us about the founder's professional experience",
+        placeholder="e.g. 8 years working in fintech before this",
+    )
     industry_sector = st.selectbox(
         "Industry sector",
         ["Fintech", "HealthTech", "EdTech", "E-commerce", "SaaS", "Consumer Goods"],
     )
-    monthly_revenue = st.number_input("Monthly revenue (₹)", 0, 50_00_000, 1_00_000, step=10_000,
-                                       help="e.g. 100000 = ₹1 Lakh")
+    revenue_text = st.text_input(
+        "What's the company's current monthly revenue?",
+        placeholder="e.g. About 2 lakh a month / Pre-revenue for now",
+    )
     revenue_growth_pct = st.slider("Revenue growth (% MoM)", -50, 100, 8)
     referral_channel_score = st.slider(
         "Founder network strength", 0.0, 1.0, 0.5, step=0.01,
@@ -221,6 +300,8 @@ with left:
         company_age_months = parse_company_age_months(age_text)
         prior_funding_rounds = parse_prior_funding_rounds(funding_history_text)
         has_validation = parse_has_validation(validation_text)
+        founder_experience_years = parse_experience_years(experience_text)
+        monthly_revenue = parse_monthly_revenue(revenue_text)
 
         row = pd.DataFrame([{
             "funding_ask": funding_ask,
@@ -344,22 +425,24 @@ if st.button("🚨 Close the Case"):
         missed = true_causes - picked
         wrong = picked - true_causes
 
-        if correct == true_causes and not wrong:
-            st.success(
-                f"**Strong case — {get_rank(submission_count)} confirmed.** You've named all the "
-                "real drivers. Make sure your written reasoning above spells out the exact pattern "
-                "for each one — that's what judges will be checking for full marks."
-            )
+        # Rating out of 10: full credit for each true cause found,
+        # minus a penalty per wrong pick, floored at 0.
+        raw_score = (len(correct) / len(true_causes)) * 10
+        penalty = len(wrong) * 1.0
+        rating = max(0, round(raw_score - penalty))
+
+        if rating >= 9:
+            st.success(f"**Rating: {rating}/10 — {get_rank(submission_count)} confirmed.** "
+                       "Strong case. Make sure your written reasoning above spells out the exact "
+                       "pattern for each cause — that's what judges will be checking for full marks.")
             st.balloons()
-        elif correct:
-            msg = f"**Partial credit.** You correctly flagged: {', '.join(correct)}."
+        elif rating >= 5:
+            msg = f"**Rating: {rating}/10.** You correctly flagged: {', '.join(correct)}."
             if missed:
-                msg += f" There's still {len(missed)} more real cause(s) hiding in the data — keep testing."
+                msg += f" Still {len(missed)} real cause(s) undiscovered — keep testing."
             if wrong:
-                msg += f" Also, {', '.join(wrong)} looked suspicious in your tests, but isn't independently causal."
+                msg += f" {', '.join(wrong)} looked suspicious but isn't independently causal."
             st.warning(msg)
         else:
-            st.error(
-                "**Not quite.** None of your picks are the real drivers on their own — they just "
-                "looked suspicious. Keep testing systematically and see what actually moves the decision."
-            )
+            st.error(f"**Rating: {rating}/10.** Not enough evidence yet — keep testing "
+                     "systematically and see what actually moves the decision.")
